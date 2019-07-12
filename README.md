@@ -2,7 +2,7 @@
 Collection of custom airflow plugins made to make our life easier
 
 
-## Intro
+## Intro
 
 This repository is a community driven custom Airflow plugins collection.
 We can keep here interesting plugins until (if ever) they will get incorporated into Airflow code base.
