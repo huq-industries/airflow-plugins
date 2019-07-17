@@ -88,6 +88,9 @@ class BigQueryChainOperator(BaseOperator):
     :param time_partitioning: configure optional time partitioning fields i.e.
         partition by field, type and expiration as per API specifications.
     :type time_partitioning: dict
+    :param: lazy_retry_wait: number of seconds to wait before retried a failed chained operation
+        Default value is 10 seconds.
+    :type: lazy_retry_wait: int
     """
 
     template_fields = ('sql', 'destination_dataset_table', 'labels')
@@ -113,6 +116,7 @@ class BigQueryChainOperator(BaseOperator):
                  labels=None,
                  priority='INTERACTIVE',
                  time_partitioning={},
+                 lazy_retry_wait=10,
                  *args,
                  **kwargs):
         super(BigQueryChainOperator, self).__init__(*args, **kwargs)
@@ -134,6 +138,7 @@ class BigQueryChainOperator(BaseOperator):
         self.bq_cursor = None
         self.priority = priority
         self.time_partitioning = time_partitioning
+        self.lazy_retry_wait = lazy_retry_wait
 
         if self.sql is None:
             raise TypeError('{} missing 1 required positional '
@@ -186,8 +191,8 @@ class BigQueryChainOperator(BaseOperator):
                 )
             except Exception as e:
                 self.log.error('Exception: %s', e)
-                self.log.info('Wait 10 seconds and retry')
-                time.sleep(10)
+                self.log.info('Wait %d seconds and retry', self.lazy_retry_wait)
+                time.sleep(self.lazy_retry_wait)
                 self.bq_cursor.run_query(
                     self.sql[i],
                     destination_dataset_table=self.destination_dataset_table[i],
@@ -248,6 +253,9 @@ class BigQueryToCloudStorageChainOperator(BaseOperator):
     :param labels: a dictionary containing labels for the job/query,
         passed to BigQuery
     :type labels: dict
+    :param: lazy_retry_wait: number of seconds to wait before retried a failed chained operation
+        Default value is 10 seconds.
+    :type: lazy_retry_wait: int
     """
     template_fields = ('source_project_dataset_table',
                        'destination_cloud_storage_uris', 'labels')
@@ -265,6 +273,7 @@ class BigQueryToCloudStorageChainOperator(BaseOperator):
                  bigquery_conn_id='bigquery_default',
                  delegate_to=None,
                  labels=None,
+                 lazy_retry_wait=10,
                  *args,
                  **kwargs):
         super(BigQueryToCloudStorageChainOperator, self).__init__(*args, **kwargs)
@@ -277,6 +286,7 @@ class BigQueryToCloudStorageChainOperator(BaseOperator):
         self.bigquery_conn_id = bigquery_conn_id
         self.delegate_to = delegate_to
         self.labels = labels
+        self.lazy_retry_wait = lazy_retry_wait
 
         if self.source_project_dataset_table is None:
             raise TypeError('{} missing 1 required positional '
@@ -320,8 +330,8 @@ class BigQueryToCloudStorageChainOperator(BaseOperator):
                     self.labels)
             except Exception as e:
                 self.log.error('Exception: %s', e)
-                self.log.info('Wait 10 seconds retry')
-                time.sleep(10)
+                self.log.info('Wait %d seconds retry', self.lazy_retry_wait)
+                time.sleep(self.lazy_retry_wait)
                 hook = BigQueryHook(bigquery_conn_id=self.bigquery_conn_id,
                                     delegate_to=self.delegate_to)
                 conn = hook.get_conn()
