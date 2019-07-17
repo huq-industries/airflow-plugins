@@ -33,13 +33,12 @@ class BigQueryChainOperator(BaseOperator):
     Executes a chain of BigQuery SQL queries in a specific BigQuery database
 
     :param sql: the sql code to be executed (templated)
-    :type sql: Can receive a str representing a sql statement,
-        a list of str (sql statements), or reference to a template file.
+    :type sql: Can receive a list of str (sql statements), or reference to a template files.
         Template reference are recognized by str ending in '.sql'.
-    :param destination_dataset_table: A dotted
-        (<project>.|<project>:)<dataset>.<table> that, if set, will store the results
+    :param destination_dataset_table: A list of dotted
+        (<project>.|<project>:)<dataset>.<table> strings that, if set, will store the results
         of the query. (templated)
-    :type destination_dataset_table: string
+    :type destination_dataset_table: list
     :param write_disposition: Specifies the action that occurs if the destination table
         already exists. (default: 'WRITE_EMPTY')
     :type write_disposition: string
@@ -91,14 +90,14 @@ class BigQueryChainOperator(BaseOperator):
     :type time_partitioning: dict
     """
 
-    template_fields = ('sqls', 'destination_dataset_tables', 'labels')
+    template_fields = ('sql', 'destination_dataset_table', 'labels')
     template_ext = ('.sql', )
     ui_color = '#e4f0e8'
 
     @apply_defaults
     def __init__(self,
-                 sqls=None,
-                 destination_dataset_tables=None,
+                 sql=None,
+                 destination_dataset_table=None,
                  write_disposition='WRITE_EMPTY',
                  allow_large_results=False,
                  flatten_results=None,
@@ -117,8 +116,8 @@ class BigQueryChainOperator(BaseOperator):
                  *args,
                  **kwargs):
         super(BigQueryChainOperator, self).__init__(*args, **kwargs)
-        self.sqls = sqls
-        self.destination_dataset_tables = destination_dataset_tables
+        self.sql = sql
+        self.destination_dataset_table = destination_dataset_table
         self.write_disposition = write_disposition
         self.create_disposition = create_disposition
         self.allow_large_results = allow_large_results
@@ -136,25 +135,25 @@ class BigQueryChainOperator(BaseOperator):
         self.priority = priority
         self.time_partitioning = time_partitioning
 
-        if self.sqls is None:
+        if self.sql is None:
             raise TypeError('{} missing 1 required positional '
-                            'argument: `sqls`'.format(self.task_id))
-        elif isinstance(sqls, str):
-            self.sqls = [sqls]
-        elif not isinstance(sqls, list):
-            raise TypeError('{} `sqls` parameter type needs to be str or list'.format(self.task_id))
+                            'argument: `sql`'.format(self.task_id))
+        elif isinstance(sql, str):
+            self.sql = [sql]
+        elif not isinstance(sql, list):
+            raise TypeError('{} `sql` parameter type needs to be str or list'.format(self.task_id))
 
-        if self.destination_dataset_tables is None:
+        if self.destination_dataset_table is None:
             raise TypeError('{} missing 1 required positional '
-                            'argument: `destination_dataset_tables`'.format(self.task_id))
-        elif isinstance(destination_dataset_tables, str):
-            self.destination_dataset_tables = [destination_dataset_tables]
-        elif not isinstance(destination_dataset_tables, list):
-            raise TypeError('{} `destination_dataset_tables` parameter type '
+                            'argument: `destination_dataset_table`'.format(self.task_id))
+        elif isinstance(destination_dataset_table, str):
+            self.destination_dataset_table = [destination_dataset_table]
+        elif not isinstance(destination_dataset_table, list):
+            raise TypeError('{} `destination_dataset_table` parameter type '
                             'needs to be str or list'.format(self.task_id))
 
-        if len(sqls) != len(destination_dataset_tables):
-            raise ValueError('{} `sqls` and `destination_dataset_tables` '
+        if len(self.sql) != len(self.destination_dataset_table):
+            raise ValueError('{} `sql` and `destination_dataset_table` '
                              'need to have the same length'.format(self.task_id))
 
     def execute(self, context):
@@ -165,13 +164,13 @@ class BigQueryChainOperator(BaseOperator):
                 delegate_to=self.delegate_to)
             conn = hook.get_conn()
             self.bq_cursor = conn.cursor()
-        for i in range(0, len(self.sqls), 1):
+        for i in range(0, len(self.sql), 1):
             try:
-                self.log.info('Executing %d/%d queries', i+1, len(self.sqls))
-                self.log.info('Executing: %s', self.sqls[i])
+                self.log.info('Executing %d/%d queries', i+1, len(self.sql))
+                self.log.info('Executing: %s', self.sql[i])
                 self.bq_cursor.run_query(
-                    self.sqls[i],
-                    destination_dataset_table=self.destination_dataset_tables[i],
+                    self.sql[i],
+                    destination_dataset_table=self.destination_dataset_table[i],
                     write_disposition=self.write_disposition,
                     allow_large_results=self.allow_large_results,
                     flatten_results=self.flatten_results,
@@ -190,8 +189,8 @@ class BigQueryChainOperator(BaseOperator):
                 self.log.info('Wait 10 seconds and retry')
                 time.sleep(10)
                 self.bq_cursor.run_query(
-                    self.sqls[i],
-                    destination_dataset_table=self.destination_dataset_tables[i],
+                    self.sql[i],
+                    destination_dataset_table=self.destination_dataset_table[i],
                     write_disposition=self.write_disposition,
                     allow_large_results=self.allow_large_results,
                     flatten_results=self.flatten_results,
@@ -222,7 +221,7 @@ class BigQueryToCloudStorageChainOperator(BaseOperator):
         For more details about these parameters:
         https://cloud.google.com/bigquery/docs/reference/v2/jobs
 
-    :param source_project_dataset_tables: A list of dotted
+    :param source_project_dataset_table: A list of dotted
         (<project>.|<project>:)<dataset>.<table> BigQuery table to use as the source
         data. If <project> is not included, project will be the project
         defined in the connection json. (templated)
@@ -250,14 +249,14 @@ class BigQueryToCloudStorageChainOperator(BaseOperator):
         passed to BigQuery
     :type labels: dict
     """
-    template_fields = ('source_project_dataset_tables',
+    template_fields = ('source_project_dataset_table',
                        'destination_cloud_storage_uris', 'labels')
     template_ext = ('.sql',)
     ui_color = '#e4e6f0'
 
     @apply_defaults
     def __init__(self,
-                 source_project_dataset_tables,
+                 source_project_dataset_table,
                  destination_cloud_storage_uris,
                  compression='NONE',
                  export_format='CSV',
@@ -269,7 +268,7 @@ class BigQueryToCloudStorageChainOperator(BaseOperator):
                  *args,
                  **kwargs):
         super(BigQueryToCloudStorageChainOperator, self).__init__(*args, **kwargs)
-        self.source_project_dataset_tables = source_project_dataset_tables
+        self.source_project_dataset_table = source_project_dataset_table
         self.destination_cloud_storage_uris = destination_cloud_storage_uris
         self.compression = compression
         self.export_format = export_format
@@ -279,13 +278,13 @@ class BigQueryToCloudStorageChainOperator(BaseOperator):
         self.delegate_to = delegate_to
         self.labels = labels
 
-        if self.source_project_dataset_tables is None:
+        if self.source_project_dataset_table is None:
             raise TypeError('{} missing 1 required positional '
-                            'argument: `source_project_dataset_tables`'.format(self.task_id))
-        elif isinstance(source_project_dataset_tables, str):
-            self.source_project_dataset_tables = [source_project_dataset_tables]
-        elif not isinstance(source_project_dataset_tables, list):
-            raise TypeError('{} `source_project_dataset_tables` parameter type needs to be str or list'.format(self.task_id))
+                            'argument: `source_project_dataset_table`'.format(self.task_id))
+        elif isinstance(source_project_dataset_table, str):
+            self.source_project_dataset_table = [source_project_dataset_table]
+        elif not isinstance(source_project_dataset_table, list):
+            raise TypeError('{} `source_project_dataset_table` parameter type needs to be str or list'.format(self.task_id))
 
         if self.destination_cloud_storage_uris is None:
             raise TypeError('{} missing 1 required positional '
@@ -296,23 +295,23 @@ class BigQueryToCloudStorageChainOperator(BaseOperator):
             raise TypeError('{} `destination_cloud_storage_uris`parameter type '
                             'needs to be str or list'.format(self.task_id))
 
-        if len(source_project_dataset_tables) != len(destination_cloud_storage_uris):
-            raise ValueError('{} `source_project_dataset_tables` and `destination_cloud_storage_uris` '
+        if len(self.source_project_dataset_table) != len(self.destination_cloud_storage_uris):
+            raise ValueError('{} `source_project_dataset_table` and `destination_cloud_storage_uris` '
                              'need to have the same length'.format(self.task_id))
 
     def execute(self, context):
-        for i in range(0, len(self.source_project_dataset_tables), 1):
+        for i in range(0, len(self.source_project_dataset_table), 1):
             try:
-                self.log.info('Executing %d/%d extracts', i+1, len(self.source_project_dataset_tables))
+                self.log.info('Executing %d/%d extracts', i+1, len(self.source_project_dataset_table))
                 self.log.info('Executing extract of %s into: %s',
-                              self.source_project_dataset_tables[i],
+                              self.source_project_dataset_table[i],
                               self.destination_cloud_storage_uris[i])
                 hook = BigQueryHook(bigquery_conn_id=self.bigquery_conn_id,
                                     delegate_to=self.delegate_to)
                 conn = hook.get_conn()
                 cursor = conn.cursor()
                 cursor.run_extract(
-                    self.source_project_dataset_tables[i],
+                    self.source_project_dataset_table[i],
                     self.destination_cloud_storage_uris[i],
                     self.compression,
                     self.export_format,
@@ -328,7 +327,7 @@ class BigQueryToCloudStorageChainOperator(BaseOperator):
                 conn = hook.get_conn()
                 cursor = conn.cursor()
                 cursor.run_extract(
-                    self.source_project_dataset_tables[i],
+                    self.source_project_dataset_table[i],
                     self.destination_cloud_storage_uris[i],
                     self.compression,
                     self.export_format,
