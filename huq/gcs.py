@@ -18,6 +18,7 @@
 # under the License.
 
 from airflow.contrib.hooks.gcs_hook import GoogleCloudStorageHook
+from airflow.hooks.S3_hook import S3Hook
 from airflow.models import BaseOperator
 from airflow.utils.decorators import apply_defaults
 
@@ -254,3 +255,54 @@ class GoogleCloudStorageComposePrefixChainOperator(BaseOperator):
             hook.download(bucket=self.buckets[i], object=self.destination_uris[i], filename=tmp.name)
             hook.upload(bucket=self.buckets[i], object=self.destination_uris[i], filename=tmp.name)
         return
+
+
+class GoogleCloudStorageToS3CopyChainOperator(BaseOperator):
+    template_fields = ('gcs_source_objects', 's3_destination_uris')
+    ui_color = '#f0eee4'
+
+    @apply_defaults
+    def __init__(self,
+                 gcs_source_buckets,
+                 gcs_source_objects,
+                 s3_destination_buckets,
+                 s3_destination_uris,
+                 google_cloud_storage_conn_id='google_cloud_storage_default',
+                 delegate_to=None,
+                 dest_aws_conn_id=None,
+                 dest_verify=None,
+                 *args,
+                 **kwargs):
+
+        super(GoogleCloudStorageToS3CopyChainOperator, self).__init__(*args, **kwargs)
+        self.gcs_source_buckets = gcs_source_buckets
+        self.gcs_source_objects = gcs_source_objects
+        self.s3_destination_buckets = s3_destination_buckets
+        self.s3_destination_uris = s3_destination_uris
+        self.google_cloud_storage_conn_id = google_cloud_storage_conn_id
+        self.dest_aws_conn_id = dest_aws_conn_id
+        self.dest_verify = dest_verify
+        self.delegate_to = delegate_to
+
+    def execute(self, context):
+        gcs_hook = GoogleCloudStorageHook(
+            google_cloud_storage_conn_id=self.google_cloud_storage_conn_id,
+            delegate_to=self.delegate_to
+        )
+        s3_hook = S3Hook(aws_conn_id=self.dest_aws_conn_id, verify=self.dest_verify)
+        for i in range(0, len(self.gcs_source_buckets), 1):
+            if gcs_hook.exists(self.gcs_source_buckets[i], self.gcs_source_objects[i]) is False:
+                self.log.warning('Skip object not found: gs://%s/%s', self.gcs_source_buckets[i], self.gcs_source_objects[i])
+                continue
+            self.log.info('Download gs://%s/%s', self.gcs_source_buckets[i], self.gcs_source_objects[i])
+            file_bytes = gcs_hook.download(
+                self.gcs_source_buckets[i],
+                self.gcs_source_objects[i]
+            )
+            self.log.info('Upload s3://%s/%s', self.s3_destination_buckets[i], self.s3_destination_uris[i])
+            s3_hook.load_bytes(
+                bytes_data=file_bytes,
+                bucket_name=self.s3_destination_buckets[i],
+                key=self.s3_destination_uris[i],
+                replace=True,
+            )
