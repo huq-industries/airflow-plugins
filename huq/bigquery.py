@@ -15,7 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-from airflow.plugins_manager import AirflowPlugin
 from airflow.models import BaseOperator
 
 from airflow.contrib.hooks.bigquery_hook import BigQueryHook
@@ -344,18 +343,3 @@ class BigQueryToCloudStorageChainOperator(BaseOperator):
                     self.field_delimiter,
                     self.print_header,
                     self.labels)
-
-
-# Defining the plugin class
-class AirflowChainsPlugin(AirflowPlugin):
-    name = "chains"
-    operators = [BigQueryChainOperator, BigQueryToCloudStorageChainOperator]
-    sensors = []
-    hooks = []
-    executors = []
-    macros = []
-    admin_views = []
-    flask_blueprints = []
-    menu_links = []
-    appbuilder_views = []
-    appbuilder_menu_items = []
