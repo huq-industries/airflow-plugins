@@ -74,11 +74,6 @@ class GoogleCloudStorageComposePrefixOperator(BaseOperator):
         self.delegate_to = delegate_to
 
     def execute(self, context):
-        self.log.info(
-            'Compose all object matching "%s" prefix into "%s"',
-            self.source_objects_prefix,
-            self.destination_uri
-        )
         hook = GoogleCloudStorageHook(
             google_cloud_storage_conn_id=self.google_cloud_storage_conn_id,
             delegate_to=self.delegate_to
@@ -100,20 +95,27 @@ class GoogleCloudStorageComposePrefixOperator(BaseOperator):
             destination_uri
         )
 
-        source_objects = hook.list(bucket=bucket, prefix=source_objects_prefix)
+        source_objects = hook.list(bucket=bucket, prefix=source_objects_prefix, maxResults=1000)
         if source_objects is None or len(source_objects) == 0:
             self.log.info('No objects found matching the prefix: "%s"', source_objects_prefix)
+            self.log.warning('Skip: "%s"', destination_uri)
+            return
+
+        self.log.info('Number of object to compose: %d', len(source_objects))
 
         if clear_destination and hook.exists(bucket=bucket, object=destination_uri):
             self.log.info('Delete %s', destination_uri)
             hook.delete(bucket=bucket, object=destination_uri)
 
         for i in range(0, len(source_objects), GCS_COMPOSE_CHUNKS):
-            end_idx = min(i + GCS_COMPOSE_CHUNKS, len(source_objects)) - 1
-            self.log.info('Compose objects form %d to %d', i, end_idx)
+            self.log.info('Compose objects from %d to %d', i, i + GCS_COMPOSE_CHUNKS - 1)
+            objects_to_compose = source_objects[i:i + GCS_COMPOSE_CHUNKS]
+            # If we do more than one iteration we need to include destination_uri into source_objects
+            if i >= GCS_COMPOSE_CHUNKS:
+                objects_to_compose.append(destination_uri)
             hook.compose(
                 bucket=bucket,
-                source_objects=source_objects[i:end_idx],
+                source_objects=objects_to_compose,
                 destination_object=destination_uri,
                 num_retries=self.compose_num_retries
             )
