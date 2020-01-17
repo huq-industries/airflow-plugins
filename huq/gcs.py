@@ -259,6 +259,56 @@ class GoogleCloudStorageComposePrefixChainOperator(BaseOperator):
         return
 
 
+class GoogleCloudStorageToS3CopyOperator(BaseOperator):
+    template_fields = ('gcs_object', 's3_uri')
+    ui_color = '#f0eee4'
+
+    @apply_defaults
+    def __init__(self,
+                 gcs_bucket,
+                 gcs_object,
+                 s3_bucket,
+                 s3_uri,
+                 google_cloud_storage_conn_id='google_cloud_storage_default',
+                 delegate_to=None,
+                 dest_aws_conn_id=None,
+                 dest_verify=None,
+                 *args,
+                 **kwargs):
+
+        super(GoogleCloudStorageToS3CopyOperator, self).__init__(*args, **kwargs)
+        self.gcs_bucket = gcs_bucket
+        self.gcs_object = gcs_object
+        self.s3_bucket = s3_bucket
+        self.s3_uri = s3_uri
+        self.google_cloud_storage_conn_id = google_cloud_storage_conn_id
+        self.dest_aws_conn_id = dest_aws_conn_id
+        self.dest_verify = dest_verify
+        self.delegate_to = delegate_to
+
+    def execute(self, context):
+        gcs_hook = GoogleCloudStorageHook(
+            google_cloud_storage_conn_id=self.google_cloud_storage_conn_id,
+            delegate_to=self.delegate_to
+        )
+        s3_hook = S3Hook(aws_conn_id=self.dest_aws_conn_id, verify=self.dest_verify)
+        if gcs_hook.exists(self.gcs_bucket, self.gcs_object) is False:
+            self.log.warning('Skip object not found: gs://%s/%s', self.gcs_bucket, self.gcs_object)
+            return
+        self.log.info('Download gs://%s/%s', self.gcs_bucket, self.gcs_object)
+        file_bytes = gcs_hook.download(
+            self.gcs_bucket,
+            self.gcs_object
+        )
+        self.log.info('Upload s3://%s/%s', self.s3_bucket, self.s3_uri)
+        s3_hook.load_bytes(
+            bytes_data=file_bytes,
+            bucket_name=self.s3_bucket,
+            key=self.s3_uri,
+            replace=True,
+        )
+
+
 class GoogleCloudStorageToS3CopyChainOperator(BaseOperator):
     template_fields = ('gcs_source_objects', 's3_destination_uris')
     ui_color = '#f0eee4'
