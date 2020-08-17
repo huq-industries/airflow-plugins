@@ -63,7 +63,7 @@ class GoogleCloudStorageComposePrefixOperator(BaseOperator):
                  delegate_to=None,
                  *args,
                  **kwargs):
-        super(self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.bucket = bucket
         self.source_objects_prefix = source_objects_prefix
         self.destination_uri = destination_uri
@@ -142,7 +142,7 @@ class GoogleCloudStorageToS3CopyOperator(BaseOperator):
                  *args,
                  **kwargs):
 
-        super(self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.gcs_bucket = gcs_bucket
         self.gcs_object = gcs_object
         self.s3_bucket = s3_bucket
@@ -175,16 +175,15 @@ class GoogleCloudStorageToS3CopyOperator(BaseOperator):
         )
 
 
-class GoogleCloudStorageToS3CopyChainOperator(BaseOperator):
-    template_fields = ('gcs_source_objects', 's3_destination_uris')
+class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
+    template_fields = ('gcs_source_uris',)
     ui_color = '#f0eee4'
 
     @apply_defaults
     def __init__(self,
-                 gcs_source_buckets,
-                 gcs_source_objects,
-                 s3_destination_buckets,
-                 s3_destination_uris,
+                 gcs_source_bucket,
+                 gcs_source_uris,
+                 s3_destination_bucket,
                  google_cloud_storage_conn_id='google_cloud_storage_default',
                  delegate_to=None,
                  dest_aws_conn_id=None,
@@ -192,11 +191,10 @@ class GoogleCloudStorageToS3CopyChainOperator(BaseOperator):
                  *args,
                  **kwargs):
 
-        super(GoogleCloudStorageToS3CopyChainOperator, self).__init__(*args, **kwargs)
-        self.gcs_source_buckets = gcs_source_buckets
-        self.gcs_source_objects = gcs_source_objects
-        self.s3_destination_buckets = s3_destination_buckets
-        self.s3_destination_uris = s3_destination_uris
+        super().__init__(*args, **kwargs)
+        self.gcs_source_bucket = gcs_source_bucket
+        self.gcs_source_uris = gcs_source_uris
+        self.s3_destination_bucket = s3_destination_bucket
         self.google_cloud_storage_conn_id = google_cloud_storage_conn_id
         self.dest_aws_conn_id = dest_aws_conn_id
         self.dest_verify = dest_verify
@@ -208,19 +206,18 @@ class GoogleCloudStorageToS3CopyChainOperator(BaseOperator):
             delegate_to=self.delegate_to
         )
         s3_hook = S3Hook(aws_conn_id=self.dest_aws_conn_id, verify=self.dest_verify)
-        for i in range(0, len(self.gcs_source_buckets), 1):
-            if gcs_hook.exists(self.gcs_source_buckets[i], self.gcs_source_objects[i]) is False:
-                self.log.warning('Skip object not found: gs://%s/%s', self.gcs_source_buckets[i], self.gcs_source_objects[i])
+
+        for obj in self.gcs_source_uris:
+            if gcs_hook.exists(self.gcs_source_bucket, obj) is False:
+                self.log.warning('Skipping. Object not found: gs://%s/%s', self.gcs_source_bucket, obj)
                 continue
-            self.log.info('Download gs://%s/%s', self.gcs_source_buckets[i], self.gcs_source_objects[i])
-            file_bytes = gcs_hook.download(
-                self.gcs_source_buckets[i],
-                self.gcs_source_objects[i]
-            )
-            self.log.info('Upload s3://%s/%s', self.s3_destination_buckets[i], self.s3_destination_uris[i])
+
+            self.log.info('Download gs://%s/%s', self.gcs_source_bucket, obj)
+            file_bytes = gcs_hook.download(self.gcs_source_bucket, obj)
+            self.log.info('Upload s3://%s/%s', self.s3_destination_bucket, obj)
             s3_hook.load_bytes(
                 bytes_data=file_bytes,
-                bucket_name=self.s3_destination_buckets[i],
-                key=self.s3_destination_uris[i],
+                bucket_name=self.s3_destination_bucket,
+                key=obj,
                 replace=True,
             )

@@ -2,7 +2,8 @@ from airflow.plugins_manager import AirflowPlugin
 
 from huq.gcs import (
     GoogleCloudStorageComposePrefixOperator,
-    GoogleCloudStorageToS3CopyChainOperator
+    GoogleCloudStorageToS3CopyObjectListOperator,
+    GoogleCloudStorageToS3CopyOperator,
 )
 
 
@@ -11,8 +12,8 @@ class AirflowHuqPlugin(AirflowPlugin):
     name = "huq"
     operators = [
         GoogleCloudStorageComposePrefixOperator,
+        GoogleCloudStorageToS3CopyObjectListOperator,
         GoogleCloudStorageToS3CopyOperator,
-        GoogleCloudStorageToS3CopyChainOperator,
     ]
     sensors = []
     hooks = []
