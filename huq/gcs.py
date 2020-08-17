@@ -63,7 +63,7 @@ class GoogleCloudStorageComposePrefixOperator(BaseOperator):
                  delegate_to=None,
                  *args,
                  **kwargs):
-        super(GoogleCloudStorageComposePrefixOperator, self).__init__(*args, **kwargs)
+        super(self).__init__(*args, **kwargs)
         self.bucket = bucket
         self.source_objects_prefix = source_objects_prefix
         self.destination_uri = destination_uri
@@ -142,7 +142,7 @@ class GoogleCloudStorageToS3CopyOperator(BaseOperator):
                  *args,
                  **kwargs):
 
-        super(GoogleCloudStorageToS3CopyOperator, self).__init__(*args, **kwargs)
+        super(self).__init__(*args, **kwargs)
         self.gcs_bucket = gcs_bucket
         self.gcs_object = gcs_object
         self.s3_bucket = s3_bucket
