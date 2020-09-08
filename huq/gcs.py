@@ -176,7 +176,7 @@ class GoogleCloudStorageToS3CopyOperator(BaseOperator):
 
 
 class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
-    template_fields = ('gcs_source_uris',)
+    template_fields = ('gcs_source_uris', 's3_destination_uris')
     ui_color = '#f0eee4'
 
     @apply_defaults
@@ -184,6 +184,7 @@ class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
                  gcs_source_bucket,
                  gcs_source_uris,
                  s3_destination_bucket,
+                 s3_destination_uris=None,
                  google_cloud_storage_conn_id='google_cloud_storage_default',
                  delegate_to=None,
                  dest_aws_conn_id=None,
@@ -195,6 +196,7 @@ class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
         self.gcs_source_bucket = gcs_source_bucket
         self.gcs_source_uris = gcs_source_uris
         self.s3_destination_bucket = s3_destination_bucket
+        self.s3_destination_uris = s3_destination_uris if s3_destination_uris is not None else self.gcs_source_uris  # noqa: E501
         self.google_cloud_storage_conn_id = google_cloud_storage_conn_id
         self.dest_aws_conn_id = dest_aws_conn_id
         self.dest_verify = dest_verify
@@ -207,17 +209,19 @@ class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
         )
         s3_hook = S3Hook(aws_conn_id=self.dest_aws_conn_id, verify=self.dest_verify)
 
-        for obj in self.gcs_source_uris:
-            if gcs_hook.exists(self.gcs_source_bucket, obj) is False:
-                self.log.warning('Skipping. Object not found: gs://%s/%s', self.gcs_source_bucket, obj)
+        for i in range(0, len(self.gcs_source_uris), 1):
+            gcs_obj = self.gcs_source_uris[i]
+            s3_obj = self.s3_destination_uris[i]
+            if gcs_hook.exists(self.gcs_source_bucket, gcs_obj) is False:
+                self.log.warning('Skipping. Object not found: gs://%s/%s', self.gcs_source_bucket, gcs_obj)
                 continue
 
-            self.log.info('Download gs://%s/%s', self.gcs_source_bucket, obj)
-            file_bytes = gcs_hook.download(self.gcs_source_bucket, obj)
-            self.log.info('Upload s3://%s/%s', self.s3_destination_bucket, obj)
+            self.log.info('Download gs://%s/%s', self.gcs_source_bucket, gcs_obj)
+            file_bytes = gcs_hook.download(self.gcs_source_bucket, gcs_obj)
+            self.log.info('Upload s3://%s/%s', self.s3_destination_bucket, s3_obj)
             s3_hook.load_bytes(
                 bytes_data=file_bytes,
                 bucket_name=self.s3_destination_bucket,
-                key=obj,
+                key=s3_obj,
                 replace=True,
             )
