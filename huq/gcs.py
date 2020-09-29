@@ -162,18 +162,21 @@ class GoogleCloudStorageToS3CopyOperator(BaseOperator):
         if gcs_hook.exists(self.gcs_source_bucket, self.gcs_source_uri) is False:
             self.log.error('Skip object not found: gs://%s/%s', self.gcs_source_bucket, self.gcs_source_uri)
             raise AirflowException('Skip object not found: gs://%s/%s', self.gcs_source_bucket, self.gcs_source_uri)
+        tmp = tempfile.NamedTemporaryFile()
         self.log.info('Download gs://%s/%s', self.gcs_source_bucket, self.gcs_source_uri)
-        file_bytes = gcs_hook.download(
-            self.gcs_source_bucket,
-            self.gcs_source_uri
+        gcs_hook.download(
+            bucket=self.gcs_source_bucket,
+            object=self.gcs_source_uri,
+            filename=tmp.name,
         )
         self.log.info('Upload s3://%s/%s', self.s3_destination_bucket, self.s3_destination_uri)
-        s3_hook.load_bytes(
-            bytes_data=file_bytes,
+        s3_hook.load_file(
+                filename=tmp.name,
             bucket_name=self.s3_destination_bucket,
             key=self.s3_destination_uri,
             replace=True,
         )
+        tmp.close()
 
 
 class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
@@ -211,6 +214,7 @@ class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
         s3_hook = S3Hook(aws_conn_id=self.dest_aws_conn_id, verify=self.dest_verify)
 
         for i in range(0, len(self.gcs_source_uris), 1):
+            tmp = tempfile.NamedTemporaryFile()
             gcs_obj = self.gcs_source_uris[i]
             s3_obj = self.s3_destination_uris[i]
             if gcs_hook.exists(self.gcs_source_bucket, gcs_obj) is False:
@@ -218,11 +222,16 @@ class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
                 continue
 
             self.log.info('Download gs://%s/%s', self.gcs_source_bucket, gcs_obj)
-            file_bytes = gcs_hook.download(self.gcs_source_bucket, gcs_obj)
+            gcs_hook.download(
+                bucket=self.gcs_source_bucket,
+                object=gcs_obj,
+                filename=tmp.name
+            )
             self.log.info('Upload s3://%s/%s', self.s3_destination_bucket, s3_obj)
-            s3_hook.load_bytes(
-                bytes_data=file_bytes,
+            s3_hook.load_file(
+                filename=tmp.name,
                 bucket_name=self.s3_destination_bucket,
                 key=s3_obj,
                 replace=True,
             )
+            tmp.close()
