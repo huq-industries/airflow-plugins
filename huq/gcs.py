@@ -21,6 +21,7 @@ from airflow.contrib.hooks.gcs_hook import GoogleCloudStorageHook
 from airflow.hooks.S3_hook import S3Hook
 from airflow.models import BaseOperator
 from airflow.utils.decorators import apply_defaults
+from airflow import AirflowException
 
 import tempfile
 
@@ -126,15 +127,15 @@ class GoogleCloudStorageComposePrefixOperator(BaseOperator):
 
 
 class GoogleCloudStorageToS3CopyOperator(BaseOperator):
-    template_fields = ('gcs_object', 's3_uri')
+    template_fields = ('gcs_source_uri', 's3_destination_uri')
     ui_color = '#f0eee4'
 
     @apply_defaults
     def __init__(self,
-                 gcs_bucket,
-                 gcs_object,
-                 s3_bucket,
-                 s3_uri,
+                 gcs_source_bucket,
+                 gcs_source_uri,
+                 s3_destination_bucket,
+                 s3_destination_uri=None,
                  google_cloud_storage_conn_id='google_cloud_storage_default',
                  delegate_to=None,
                  dest_aws_conn_id=None,
@@ -143,10 +144,10 @@ class GoogleCloudStorageToS3CopyOperator(BaseOperator):
                  **kwargs):
 
         super().__init__(*args, **kwargs)
-        self.gcs_bucket = gcs_bucket
-        self.gcs_object = gcs_object
-        self.s3_bucket = s3_bucket
-        self.s3_uri = s3_uri
+        self.gcs_source_bucket = gcs_source_bucket
+        self.gcs_source_uri = gcs_source_uri
+        self.s3_destination_bucket = s3_destination_bucket
+        self.s3_destination_uri = s3_destination_uri if s3_destination_uri is not None else self.gcs_source_uri  # noqa: E501
         self.google_cloud_storage_conn_id = google_cloud_storage_conn_id
         self.dest_aws_conn_id = dest_aws_conn_id
         self.dest_verify = dest_verify
@@ -158,19 +159,19 @@ class GoogleCloudStorageToS3CopyOperator(BaseOperator):
             delegate_to=self.delegate_to
         )
         s3_hook = S3Hook(aws_conn_id=self.dest_aws_conn_id, verify=self.dest_verify)
-        if gcs_hook.exists(self.gcs_bucket, self.gcs_object) is False:
-            self.log.warning('Skip object not found: gs://%s/%s', self.gcs_bucket, self.gcs_object)
-            return
-        self.log.info('Download gs://%s/%s', self.gcs_bucket, self.gcs_object)
+        if gcs_hook.exists(self.gcs_source_bucket, self.gcs_source_uri) is False:
+            self.log.error('Skip object not found: gs://%s/%s', self.gcs_source_bucket, self.gcs_source_uri)
+            raise AirflowException('Skip object not found: gs://%s/%s', self.gcs_source_bucket, self.gcs_source_uri)
+        self.log.info('Download gs://%s/%s', self.gcs_source_bucket, self.gcs_source_uri)
         file_bytes = gcs_hook.download(
-            self.gcs_bucket,
-            self.gcs_object
+            self.gcs_source_bucket,
+            self.gcs_source_uri
         )
-        self.log.info('Upload s3://%s/%s', self.s3_bucket, self.s3_uri)
+        self.log.info('Upload s3://%s/%s', self.s3_destination_bucket, self.s3_destination_uri)
         s3_hook.load_bytes(
             bytes_data=file_bytes,
-            bucket_name=self.s3_bucket,
-            key=self.s3_uri,
+            bucket_name=self.s3_destination_bucket,
+            key=self.s3_destination_uri,
             replace=True,
         )
 
