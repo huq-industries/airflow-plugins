@@ -193,6 +193,7 @@ class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
                  delegate_to=None,
                  dest_aws_conn_id=None,
                  dest_verify=None,
+                 fail_on_missing=False,
                  *args,
                  **kwargs):
 
@@ -205,6 +206,8 @@ class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
         self.dest_aws_conn_id = dest_aws_conn_id
         self.dest_verify = dest_verify
         self.delegate_to = delegate_to
+        self.fail_on_missing = fail_on_missing
+        self.is_failed = False
 
     def execute(self, context):
         gcs_hook = GoogleCloudStorageHook(
@@ -218,7 +221,11 @@ class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
             gcs_obj = self.gcs_source_uris[i]
             s3_obj = self.s3_destination_uris[i]
             if gcs_hook.exists(self.gcs_source_bucket, gcs_obj) is False:
-                self.log.warning('Skipping. Object not found: gs://%s/%s', self.gcs_source_bucket, gcs_obj)
+                if self.fail_on_missing is True:
+                    self.log.error('Execution will fail Object not found: gs://%s/%s', self.gcs_source_bucket, gcs_obj)
+                    self.is_failed = True
+                else:
+                    self.log.warning('Skipping. Object not found: gs://%s/%s', self.gcs_source_bucket, gcs_obj)
                 continue
 
             self.log.info('Download gs://%s/%s', self.gcs_source_bucket, gcs_obj)
@@ -235,3 +242,5 @@ class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
                 replace=True,
             )
             tmp.close()
+            if self.is_failed:
+                raise AirflowException('Some object were not found at the source.')
