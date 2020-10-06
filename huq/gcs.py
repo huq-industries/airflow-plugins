@@ -21,6 +21,7 @@ from airflow.contrib.hooks.gcs_hook import GoogleCloudStorageHook
 from airflow.hooks.S3_hook import S3Hook
 from airflow.models import BaseOperator
 from airflow.utils.decorators import apply_defaults
+from airflow import AirflowException
 
 import tempfile
 
@@ -63,7 +64,7 @@ class GoogleCloudStorageComposePrefixOperator(BaseOperator):
                  delegate_to=None,
                  *args,
                  **kwargs):
-        super(GoogleCloudStorageComposePrefixOperator, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.bucket = bucket
         self.source_objects_prefix = source_objects_prefix
         self.destination_uri = destination_uri
@@ -74,11 +75,6 @@ class GoogleCloudStorageComposePrefixOperator(BaseOperator):
         self.delegate_to = delegate_to
 
     def execute(self, context):
-        self.log.info(
-            'Compose all object matching "%s" prefix into "%s"',
-            self.source_objects_prefix,
-            self.destination_uri
-        )
         hook = GoogleCloudStorageHook(
             google_cloud_storage_conn_id=self.google_cloud_storage_conn_id,
             delegate_to=self.delegate_to
@@ -100,20 +96,27 @@ class GoogleCloudStorageComposePrefixOperator(BaseOperator):
             destination_uri
         )
 
-        source_objects = hook.list(bucket=bucket, prefix=source_objects_prefix)
+        source_objects = hook.list(bucket=bucket, prefix=source_objects_prefix, maxResults=1000)
         if source_objects is None or len(source_objects) == 0:
             self.log.info('No objects found matching the prefix: "%s"', source_objects_prefix)
+            self.log.warning('Skip: "%s"', destination_uri)
+            return
+
+        self.log.info('Number of object to compose: %d', len(source_objects))
 
         if clear_destination and hook.exists(bucket=bucket, object=destination_uri):
             self.log.info('Delete %s', destination_uri)
             hook.delete(bucket=bucket, object=destination_uri)
 
         for i in range(0, len(source_objects), GCS_COMPOSE_CHUNKS):
-            end_idx = min(i + GCS_COMPOSE_CHUNKS, len(source_objects)) - 1
-            self.log.info('Compose objects form %d to %d', i, end_idx)
+            self.log.info('Compose objects from %d to %d', i, i + GCS_COMPOSE_CHUNKS - 1)
+            objects_to_compose = source_objects[i:i + GCS_COMPOSE_CHUNKS]
+            # If we do more than one iteration we need to include destination_uri into source_objects
+            if i >= GCS_COMPOSE_CHUNKS:
+                objects_to_compose.append(destination_uri)
             hook.compose(
                 bucket=bucket,
-                source_objects=source_objects[i:end_idx],
+                source_objects=objects_to_compose,
                 destination_object=destination_uri,
                 num_retries=self.compose_num_retries
             )
@@ -123,150 +126,16 @@ class GoogleCloudStorageComposePrefixOperator(BaseOperator):
         return
 
 
-class GoogleCloudStorageComposePrefixChainOperator(BaseOperator):
-    """
-    Downloads a file from Google Cloud Storage.
-    :param bucket: The Google cloud storage bucket where the object is. (templated)
-    :type bucket: str
-    :param source_objects_prefix: List of GCS objects to compose. (templated)
-    :type source_objects_prefix: str
-    :param destination_object: Destination GCS object path. (templated)
-    :type destination_object: str
-    :param num_retries: Number of retries for each compose action.
-    :type num_retries: int
-    :param delete_sources: Flag to enable source deletion after composition.
-    :type num_retries: bool
-    :param google_cloud_storage_conn_id: The connection ID to use when
-        connecting to Google cloud storage.
-    :type google_cloud_storage_conn_id: str
-    :param delegate_to: The account to impersonate, if any.
-        For this to work, the service account making the request must have
-        domain-wide delegation enabled.
-    :type delegate_to: str
-    """
-    template_fields = ('buckets', 'source_objects_prefixes', 'destination_uris',)
+class GoogleCloudStorageToS3CopyOperator(BaseOperator):
+    template_fields = ('gcs_source_uri', 's3_destination_uri')
     ui_color = '#f0eee4'
 
     @apply_defaults
     def __init__(self,
-                 buckets,
-                 source_objects_prefixes,
-                 destination_uris,
-                 compose_num_retries=5,
-                 delete_sources=False,
-                 clear_destination=True,
-                 google_cloud_storage_conn_id='google_cloud_default',
-                 delegate_to=None,
-                 *args,
-                 **kwargs):
-        super(GoogleCloudStorageComposePrefixChainOperator, self).__init__(*args, **kwargs)
-        self.buckets = buckets
-        self.source_objects_prefixes = source_objects_prefixes
-        self.destination_uris = destination_uris
-        self.compose_num_retries = compose_num_retries
-        self.delete_sources = delete_sources
-        self.clear_destination = clear_destination
-        self.google_cloud_storage_conn_id = google_cloud_storage_conn_id
-        self.delegate_to = delegate_to
-
-        if self.buckets is None:
-            raise TypeError('{} missing 1 required positional '
-                            'argument: `buckets`'.format(self.task_id))
-        elif not isinstance(buckets, list):
-            raise TypeError('{} `buckets` parameter type needs to be str or list'.format(self.task_id))
-
-        if self.source_objects_prefixes is None:
-            raise TypeError('{} missing 1 required positional '
-                            'argument: `source_objects_prefixes`'.format(self.task_id))
-        elif not isinstance(source_objects_prefixes, list):
-            raise TypeError('{} `source_objects_prefixes` parameter type needs to be str or list'.format(self.task_id))
-
-        if self.destination_uris is None:
-            raise TypeError('{} missing 1 required positional '
-                            'argument: `destination_uris`'.format(self.task_id))
-        elif not isinstance(destination_uris, list):
-            raise TypeError('{} `destination_uris`parameter type '
-                            'needs to be str or list'.format(self.task_id))
-
-        if len(self.source_objects_prefixes) != len(self.destination_uris):
-            raise ValueError('{} `source_objects_prefixes` and `destination_cloud_storage_uris` '
-                             'need to have the same length'.format(self.task_id))
-
-    def execute(self, context):
-        hook = GoogleCloudStorageHook(
-            google_cloud_storage_conn_id=self.google_cloud_storage_conn_id,
-            delegate_to=self.delegate_to
-        )
-        self._compose(
-            hook=hook,
-            delete_sources=self.delete_sources,
-            clear_destination=self.clear_destination
-        )
-        return
-
-    def _compose(self, hook, delete_sources=False, clear_destination=True):
-        for i in range(0, len(self.source_objects_prefixes), 1):
-            bucket = self.buckets[i]
-            source_objects_prefix = self.source_objects_prefixes[i]
-            destination_uri = self.destination_uris[i]
-            self.log.info(
-                'Compose all object matching "%s" prefix into "%s"',
-                source_objects_prefix,
-                destination_uri
-            )
-
-            source_objects = hook.list(
-                bucket=bucket,
-                prefix=source_objects_prefix,
-                maxResults=1000,
-            )
-            if source_objects is None or len(source_objects) == 0:
-                self.log.warning('No objects found matching the prefix: "%s"', source_objects_prefix)
-                self.log.warning('Skip: "%s"', destination_uri)
-                continue
-
-            self.log.info('Number of object to compose: %d', len(source_objects))
-
-            if clear_destination and hook.exists(bucket=bucket, object=destination_uri):
-                self.log.info('Delete %s', destination_uri)
-                hook.delete(bucket=bucket, object=destination_uri)
-
-            for j in range(0, len(source_objects), GCS_COMPOSE_CHUNKS):
-                self.log.info('Compose objects from %d to %d', j, j+GCS_COMPOSE_CHUNKS-1)
-                objects_to_compose = source_objects[j:j + GCS_COMPOSE_CHUNKS]
-                # If we do more than one iteration we need to include destination_uri into source_objects
-                if j >= GCS_COMPOSE_CHUNKS:
-                    objects_to_compose.append(destination_uri)
-                hook.compose(
-                    bucket=bucket,
-                    source_objects=objects_to_compose,
-                    destination_object=destination_uri,
-                    num_retries=self.compose_num_retries
-                )
-            if delete_sources:
-                for source_object in source_objects:
-                    hook.delete(bucket=bucket, object=source_object)
-
-    def _consolidate(self, hook):
-        for i in range(0, len(self.destination_uris), 1):
-            tmp = tempfile.NamedTemporaryFile(suffix='.tmp',
-                                              prefix='gcs_consolidate_tmp_',
-                                              dir='/tmp')
-            hook.download(bucket=self.buckets[i], object=self.destination_uris[i], filename=tmp.name)
-            hook.upload(bucket=self.buckets[i], object=self.destination_uris[i], filename=tmp.name)
-        return
-
-
-class GoogleCloudStorageToS3CopyChainOperator(BaseOperator):
-    template_fields = ('gcs_source_objects', 's3_destination_uris')
-    ui_color = '#f0eee4'
-
-    @apply_defaults
-    def __init__(self,
-                 gcs_source_buckets,
-                 gcs_source_objects,
-                 s3_destination_buckets,
-                 s3_destination_uris,
+                 gcs_source_bucket,
+                 gcs_source_uri,
+                 s3_destination_bucket,
+                 s3_destination_uri=None,
                  google_cloud_storage_conn_id='google_cloud_storage_default',
                  delegate_to=None,
                  dest_aws_conn_id=None,
@@ -274,11 +143,11 @@ class GoogleCloudStorageToS3CopyChainOperator(BaseOperator):
                  *args,
                  **kwargs):
 
-        super(GoogleCloudStorageToS3CopyChainOperator, self).__init__(*args, **kwargs)
-        self.gcs_source_buckets = gcs_source_buckets
-        self.gcs_source_objects = gcs_source_objects
-        self.s3_destination_buckets = s3_destination_buckets
-        self.s3_destination_uris = s3_destination_uris
+        super().__init__(*args, **kwargs)
+        self.gcs_source_bucket = gcs_source_bucket
+        self.gcs_source_uri = gcs_source_uri
+        self.s3_destination_bucket = s3_destination_bucket
+        self.s3_destination_uri = s3_destination_uri if s3_destination_uri is not None else self.gcs_source_uri  # noqa: E501
         self.google_cloud_storage_conn_id = google_cloud_storage_conn_id
         self.dest_aws_conn_id = dest_aws_conn_id
         self.dest_verify = dest_verify
@@ -290,19 +159,88 @@ class GoogleCloudStorageToS3CopyChainOperator(BaseOperator):
             delegate_to=self.delegate_to
         )
         s3_hook = S3Hook(aws_conn_id=self.dest_aws_conn_id, verify=self.dest_verify)
-        for i in range(0, len(self.gcs_source_buckets), 1):
-            if gcs_hook.exists(self.gcs_source_buckets[i], self.gcs_source_objects[i]) is False:
-                self.log.warning('Skip object not found: gs://%s/%s', self.gcs_source_buckets[i], self.gcs_source_objects[i])
+        if gcs_hook.exists(self.gcs_source_bucket, self.gcs_source_uri) is False:
+            self.log.error('Skip object not found: gs://%s/%s', self.gcs_source_bucket, self.gcs_source_uri)
+            raise AirflowException('Skip object not found: gs://%s/%s', self.gcs_source_bucket, self.gcs_source_uri)
+        tmp = tempfile.NamedTemporaryFile()
+        self.log.info('Download gs://%s/%s', self.gcs_source_bucket, self.gcs_source_uri)
+        gcs_hook.download(
+            bucket=self.gcs_source_bucket,
+            object=self.gcs_source_uri,
+            filename=tmp.name,
+        )
+        self.log.info('Upload s3://%s/%s', self.s3_destination_bucket, self.s3_destination_uri)
+        s3_hook.load_file(
+                filename=tmp.name,
+            bucket_name=self.s3_destination_bucket,
+            key=self.s3_destination_uri,
+            replace=True,
+        )
+        tmp.close()
+
+
+class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
+    template_fields = ('gcs_source_uris', 's3_destination_uris')
+    ui_color = '#f0eee4'
+
+    @apply_defaults
+    def __init__(self,
+                 gcs_source_bucket,
+                 gcs_source_uris,
+                 s3_destination_bucket,
+                 s3_destination_uris=None,
+                 google_cloud_storage_conn_id='google_cloud_storage_default',
+                 delegate_to=None,
+                 dest_aws_conn_id=None,
+                 dest_verify=None,
+                 fail_on_missing=False,
+                 *args,
+                 **kwargs):
+
+        super().__init__(*args, **kwargs)
+        self.gcs_source_bucket = gcs_source_bucket
+        self.gcs_source_uris = gcs_source_uris
+        self.s3_destination_bucket = s3_destination_bucket
+        self.s3_destination_uris = s3_destination_uris if s3_destination_uris is not None else self.gcs_source_uris  # noqa: E501
+        self.google_cloud_storage_conn_id = google_cloud_storage_conn_id
+        self.dest_aws_conn_id = dest_aws_conn_id
+        self.dest_verify = dest_verify
+        self.delegate_to = delegate_to
+        self.fail_on_missing = fail_on_missing
+        self.is_failed = False
+
+    def execute(self, context):
+        gcs_hook = GoogleCloudStorageHook(
+            google_cloud_storage_conn_id=self.google_cloud_storage_conn_id,
+            delegate_to=self.delegate_to
+        )
+        s3_hook = S3Hook(aws_conn_id=self.dest_aws_conn_id, verify=self.dest_verify)
+
+        for i in range(0, len(self.gcs_source_uris), 1):
+            tmp = tempfile.NamedTemporaryFile()
+            gcs_obj = self.gcs_source_uris[i]
+            s3_obj = self.s3_destination_uris[i]
+            if gcs_hook.exists(self.gcs_source_bucket, gcs_obj) is False:
+                if self.fail_on_missing is True:
+                    self.log.error('Execution will fail Object not found: gs://%s/%s', self.gcs_source_bucket, gcs_obj)
+                    self.is_failed = True
+                else:
+                    self.log.warning('Skipping. Object not found: gs://%s/%s', self.gcs_source_bucket, gcs_obj)
                 continue
-            self.log.info('Download gs://%s/%s', self.gcs_source_buckets[i], self.gcs_source_objects[i])
-            file_bytes = gcs_hook.download(
-                self.gcs_source_buckets[i],
-                self.gcs_source_objects[i]
+
+            self.log.info('Download gs://%s/%s', self.gcs_source_bucket, gcs_obj)
+            gcs_hook.download(
+                bucket=self.gcs_source_bucket,
+                object=gcs_obj,
+                filename=tmp.name
             )
-            self.log.info('Upload s3://%s/%s', self.s3_destination_buckets[i], self.s3_destination_uris[i])
-            s3_hook.load_bytes(
-                bytes_data=file_bytes,
-                bucket_name=self.s3_destination_buckets[i],
-                key=self.s3_destination_uris[i],
+            self.log.info('Upload s3://%s/%s', self.s3_destination_bucket, s3_obj)
+            s3_hook.load_file(
+                filename=tmp.name,
+                bucket_name=self.s3_destination_bucket,
+                key=s3_obj,
                 replace=True,
             )
+            tmp.close()
+            if self.is_failed:
+                raise AirflowException('Some object were not found at the source.')
