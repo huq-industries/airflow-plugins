@@ -136,6 +136,7 @@ class GoogleCloudStorageToS3CopyOperator(BaseOperator):
                  gcs_source_uri,
                  s3_destination_bucket,
                  s3_destination_uri=None,
+                 s3_acl_policy=None,
                  google_cloud_storage_conn_id='google_cloud_storage_default',
                  delegate_to=None,
                  dest_aws_conn_id=None,
@@ -148,6 +149,7 @@ class GoogleCloudStorageToS3CopyOperator(BaseOperator):
         self.gcs_source_uri = gcs_source_uri
         self.s3_destination_bucket = s3_destination_bucket
         self.s3_destination_uri = s3_destination_uri if s3_destination_uri is not None else self.gcs_source_uri  # noqa: E501
+        self.s3_acl_policy = s3_acl_policy
         self.google_cloud_storage_conn_id = google_cloud_storage_conn_id
         self.dest_aws_conn_id = dest_aws_conn_id
         self.dest_verify = dest_verify
@@ -175,6 +177,7 @@ class GoogleCloudStorageToS3CopyOperator(BaseOperator):
             bucket_name=self.s3_destination_bucket,
             key=self.s3_destination_uri,
             replace=True,
+            acl_policy=self.s3_acl_policy
         )
         tmp.close()
 
@@ -189,6 +192,7 @@ class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
                  gcs_source_uris,
                  s3_destination_bucket,
                  s3_destination_uris=None,
+                 s3_acl_policy=None,
                  google_cloud_storage_conn_id='google_cloud_storage_default',
                  delegate_to=None,
                  dest_aws_conn_id=None,
@@ -202,6 +206,7 @@ class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
         self.gcs_source_uris = gcs_source_uris
         self.s3_destination_bucket = s3_destination_bucket
         self.s3_destination_uris = s3_destination_uris if s3_destination_uris is not None else self.gcs_source_uris  # noqa: E501
+        self.s3_acl_policy = s3_acl_policy
         self.google_cloud_storage_conn_id = google_cloud_storage_conn_id
         self.dest_aws_conn_id = dest_aws_conn_id
         self.dest_verify = dest_verify
@@ -240,6 +245,7 @@ class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
                 bucket_name=self.s3_destination_bucket,
                 key=s3_obj,
                 replace=True,
+                acl_policy=self.s3_acl_policy
             )
             tmp.close()
             if self.is_failed:
