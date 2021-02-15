@@ -182,6 +182,79 @@ class GoogleCloudStorageToS3CopyOperator(BaseOperator):
         tmp.close()
 
 
+class GoogleCloudStorageToS3CopyPrefixOperator(BaseOperator):
+    template_fields = ('gcs_source_prefix', )
+    ui_color = '#f0eee4'
+
+    @apply_defaults
+    def __init__(self,
+                 gcs_source_bucket,
+                 gcs_source_prefix,
+                 s3_destination_bucket,
+                 s3_acl_policy=None,
+                 google_cloud_storage_conn_id='google_cloud_storage_default',
+                 delegate_to=None,
+                 dest_aws_conn_id=None,
+                 dest_verify=None,
+                 fail_on_missing=False,
+                 *args,
+                 **kwargs):
+
+        super().__init__(*args, **kwargs)
+        self.gcs_source_bucket = gcs_source_bucket
+        self.gcs_source_prefix = gcs_source_prefix
+        self.s3_destination_bucket = s3_destination_bucket
+        self.s3_acl_policy = s3_acl_policy
+        self.google_cloud_storage_conn_id = google_cloud_storage_conn_id
+        self.dest_aws_conn_id = dest_aws_conn_id
+        self.dest_verify = dest_verify
+        self.delegate_to = delegate_to
+        self.fail_on_missing = fail_on_missing
+        self.is_failed = False
+
+    def execute(self, context):
+        gcs_hook = GoogleCloudStorageHook(
+            google_cloud_storage_conn_id=self.google_cloud_storage_conn_id,
+            delegate_to=self.delegate_to
+        )
+        s3_hook = S3Hook(aws_conn_id=self.dest_aws_conn_id, verify=self.dest_verify)
+
+        gcs_source_objects = gcs_hook.list(bucket=self.gcs_source_bucket, prefix=self.gcs_source_prefix, maxResults=1000)
+        if gcs_source_objects is None or len(gcs_source_objects) == 0:
+            self.log.warn('SKIP: No objects found matching the prefix "%s"', self.gcs_source_prefix)
+            return
+
+        self.log.info('Number of object to compose: %d', len(gcs_source_objects))
+
+        for gcs_uri in gcs_source_objects:
+            tmp = tempfile.NamedTemporaryFile()
+            if gcs_hook.exists(self.gcs_source_bucket, gcs_uri) is False:
+                if self.fail_on_missing is True:
+                    self.log.error('Execution will fail Object not found: gs://%s/%s', self.gcs_source_bucket, gcs_uri)
+                    self.is_failed = True
+                else:
+                    self.log.warning('Skipping. Object not found: gs://%s/%s', self.gcs_source_bucket, gcs_uri)
+                continue
+
+            self.log.info('Download gs://%s/%s', self.gcs_source_bucket, gcs_uri)
+            gcs_hook.download(
+                bucket=self.gcs_source_bucket,
+                object=gcs_uri,
+                filename=tmp.name
+            )
+            self.log.info('Upload s3://%s/%s', self.s3_destination_bucket, gcs_uri)
+            s3_hook.load_file(
+                filename=tmp.name,
+                bucket_name=self.s3_destination_bucket,
+                key=gcs_uri,
+                replace=True,
+                acl_policy=self.s3_acl_policy
+            )
+            tmp.close()
+            if self.is_failed:
+                raise AirflowException('Some object were not found at the source.')
+
+
 class GoogleCloudStorageToS3CopyObjectListOperator(BaseOperator):
     template_fields = ('gcs_source_uris', 's3_destination_uris')
     ui_color = '#f0eee4'
